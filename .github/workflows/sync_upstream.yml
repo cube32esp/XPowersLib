@@ -1,0 +1,82 @@
+name: Sync Upstream
+
+on:
+  schedule:
+    - cron: "0 0 * * 1"  # Every Monday at 00:00 UTC
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Add upstream remote
+        run: git remote add upstream https://github.com/lewisxhe/XPowersLib.git
+
+      - name: Fetch upstream
+        run: git fetch upstream master
+
+      - name: Check if already up-to-date
+        id: check
+        run: |
+          UPSTREAM_SHA=$(git rev-parse upstream/master)
+          MERGE_BASE=$(git merge-base HEAD upstream/master)
+          if [ "$UPSTREAM_SHA" = "$MERGE_BASE" ]; then
+            echo "up_to_date=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "up_to_date=false" >> "$GITHUB_OUTPUT"
+            echo "branch=sync/upstream-$(date +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check for existing open sync PR
+        if: steps.check.outputs.up_to_date == 'false'
+        id: existing_pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          COUNT=$(gh pr list --state open --head "sync/upstream-" --json number --jq 'length')
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+
+      - name: Create sync branch and push
+        if: steps.check.outputs.up_to_date == 'false' && steps.existing_pr.outputs.count == '0'
+        run: |
+          BRANCH="${{ steps.check.outputs.branch }}"
+          git checkout -b "$BRANCH"
+          git merge upstream/master --no-edit
+          git push origin "$BRANCH"
+
+      - name: Open pull request
+        if: steps.check.outputs.up_to_date == 'false' && steps.existing_pr.outputs.count == '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BRANCH="${{ steps.check.outputs.branch }}"
+          gh pr create \
+            --base master \
+            --head "$BRANCH" \
+            --title "chore: sync upstream lewisxhe/XPowersLib $(date +%Y-%m-%d)" \
+            --body "Automated weekly sync from [lewisxhe/XPowersLib](https://github.com/lewisxhe/XPowersLib) master branch.
+
+          Review the changes before merging. If conflicts exist, resolve them manually on the \`$BRANCH\` branch."
+
+      - name: No action needed
+        if: steps.check.outputs.up_to_date == 'true'
+        run: echo "Fork is already up-to-date with upstream. No PR needed."
+
+      - name: Sync PR already open
+        if: steps.check.outputs.up_to_date == 'false' && steps.existing_pr.outputs.count != '0'
+        run: echo "An open sync PR already exists. Skipping new PR creation."
