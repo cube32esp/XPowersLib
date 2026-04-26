@@ -16,6 +16,6 @@ jobs:
       - name: Upload to ESP Component Registry
         uses: espressif/upload-components-ci-action@v2
         with:
-          name: "XPowersLib"
+          components: "XPowersLib:."
           namespace: "cube32esp"
           api_token: ${{ secrets.IDF_COMPONENT_API_TOKEN }}
